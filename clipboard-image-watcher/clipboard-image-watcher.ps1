@@ -1,0 +1,117 @@
+# clipboard-image-watcher.ps1
+# 剪貼簿圖片監視器 - 偵測剪貼簿圖片並自動存成 PNG，將路徑寫回剪貼簿
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$screenshotDir = Join-Path $env:TEMP "claude-screenshots"
+$logFile = Join-Path $screenshotDir "watcher.log"
+$stopFile = Join-Path $screenshotDir ".stop"
+
+# 確保截圖目錄存在
+if (-not (Test-Path $screenshotDir)) {
+    New-Item -ItemType Directory -Path $screenshotDir -Force | Out-Null
+}
+
+function Write-Log {
+    param([string]$Message)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -Path $logFile -Value "[$timestamp] $Message" -ErrorAction SilentlyContinue
+}
+
+# 單一實例檢查
+$mutexName = "Global\ClaudeClipboardWatcher"
+$mutex = New-Object System.Threading.Mutex($false, $mutexName)
+try {
+    if (-not $mutex.WaitOne(0)) {
+        Write-Log "另一個實例已在執行，退出"
+        exit 0
+    }
+} catch [System.Threading.AbandonedMutexException] {
+    # 上一個實例異常退出，我們接手 mutex
+}
+
+Write-Log "剪貼簿監視器啟動"
+
+$lastSignature = ""
+
+function Get-ImageSignature {
+    param([System.Drawing.Image]$Image)
+    $bmp = $null
+    $cropped = $null
+    $ms = $null
+    $md5 = $null
+    try {
+        $width = $Image.Width
+        $height = $Image.Height
+        $bmp = New-Object System.Drawing.Bitmap($Image)
+        # 取左上角小區域像素作為快速簽名
+        $cropW = [Math]::Min($width, 64)
+        $cropH = [Math]::Min($height, 16)
+        $rect = New-Object System.Drawing.Rectangle(0, 0, $cropW, $cropH)
+        $cropped = $bmp.Clone($rect, $bmp.PixelFormat)
+        $ms = New-Object System.IO.MemoryStream
+        $cropped.Save($ms, [System.Drawing.Imaging.ImageFormat]::Bmp)
+        $bytes = $ms.ToArray()
+        $md5 = [System.Security.Cryptography.MD5]::Create()
+        $hash = [BitConverter]::ToString($md5.ComputeHash($bytes)).Replace("-", "").Substring(0, 16)
+        return "${width}x${height}_${hash}"
+    } catch {
+        return ""
+    } finally {
+        if ($md5) { $md5.Dispose() }
+        if ($ms) { $ms.Dispose() }
+        if ($cropped) { $cropped.Dispose() }
+        if ($bmp) { $bmp.Dispose() }
+    }
+}
+
+# 清除舊的 stop sentinel
+if (Test-Path $stopFile) { Remove-Item $stopFile -Force }
+
+try {
+    while ($true) {
+        # 檢查停止信號
+        if (Test-Path $stopFile) {
+            Write-Log "收到停止信號，退出"
+            Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
+            break
+        }
+
+        try {
+            if ([System.Windows.Forms.Clipboard]::ContainsImage()) {
+                $image = [System.Windows.Forms.Clipboard]::GetImage()
+                if ($null -ne $image) {
+                    $sig = Get-ImageSignature -Image $image
+                    if ($sig -ne "" -and $sig -ne $lastSignature) {
+                        # 新圖片 - 存檔
+                        $timestamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
+                        $filename = "clipboard_${timestamp}.png"
+                        $filepath = Join-Path $screenshotDir $filename
+
+                        try {
+                            $image.Save($filepath, [System.Drawing.Imaging.ImageFormat]::Png)
+                            [System.Windows.Forms.Clipboard]::SetText($filepath)
+                            $lastSignature = $sig
+                        } catch {
+                            Write-Log "存檔失敗: $_"
+                        }
+                    }
+                    $image.Dispose()
+                }
+            }
+        } catch [System.Runtime.InteropServices.ExternalException] {
+            # 剪貼簿被鎖定，跳過
+        } catch {
+            Write-Log "輪詢錯誤: $_"
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+} finally {
+    Write-Log "剪貼簿監視器停止"
+    if ($mutex) {
+        $mutex.ReleaseMutex()
+        $mutex.Dispose()
+    }
+}
