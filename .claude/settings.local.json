@@ -5,7 +5,9 @@
       "Bash(pip list:*)",
       "WebSearch",
       "WebFetch(domain:getinvoke.dev)",
-      "Skill(update-config)"
+      "Skill(update-config)",
+      "Bash(cmd //c install.bat)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -Command \"& cmd /c 'install.bat' 2>&1\")"
     ]
   }
 }
