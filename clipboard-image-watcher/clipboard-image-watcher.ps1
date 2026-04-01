@@ -4,6 +4,12 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# 檢查 STA 模式（powershell.exe 5.1 預設 STA，pwsh.exe 7+ 預設 MTA 會失敗）
+if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
+    Write-Host "錯誤：此腳本必須在 STA 模式下執行（使用 powershell.exe，不要用 pwsh.exe）" -ForegroundColor Red
+    exit 1
+}
+
 $screenshotDir = Join-Path $env:TEMP "claude-screenshots"
 $logFile = Join-Path $screenshotDir "watcher.log"
 $stopFile = Join-Path $screenshotDir ".stop"
@@ -25,6 +31,7 @@ $mutex = New-Object System.Threading.Mutex($false, $mutexName)
 try {
     if (-not $mutex.WaitOne(0)) {
         Write-Log "另一個實例已在執行，退出"
+        $mutex.Dispose()
         exit 0
     }
 } catch [System.Threading.AbandonedMutexException] {
@@ -67,7 +74,7 @@ function Get-ImageSignature {
 }
 
 # 清除舊的 stop sentinel
-if (Test-Path $stopFile) { Remove-Item $stopFile -Force }
+if (Test-Path $stopFile) { Remove-Item $stopFile -Force -ErrorAction SilentlyContinue }
 
 try {
     while ($true) {
@@ -82,22 +89,23 @@ try {
             if ([System.Windows.Forms.Clipboard]::ContainsImage()) {
                 $image = [System.Windows.Forms.Clipboard]::GetImage()
                 if ($null -ne $image) {
-                    $sig = Get-ImageSignature -Image $image
-                    if ($sig -ne "" -and $sig -ne $lastSignature) {
-                        # 新圖片 - 存檔
-                        $timestamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
-                        $filename = "clipboard_${timestamp}.png"
-                        $filepath = Join-Path $screenshotDir $filename
-
-                        try {
-                            $image.Save($filepath, [System.Drawing.Imaging.ImageFormat]::Png)
-                            [System.Windows.Forms.Clipboard]::SetText($filepath)
-                            $lastSignature = $sig
-                        } catch {
-                            Write-Log "存檔失敗: $_"
+                    try {
+                        $sig = Get-ImageSignature -Image $image
+                        if ($sig -ne "" -and $sig -ne $lastSignature) {
+                            $timestamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
+                            $filename = "clipboard_${timestamp}.png"
+                            $filepath = Join-Path $screenshotDir $filename
+                            try {
+                                $image.Save($filepath, [System.Drawing.Imaging.ImageFormat]::Png)
+                                [System.Windows.Forms.Clipboard]::SetText($filepath)
+                                $lastSignature = $sig
+                            } catch {
+                                Write-Log "存檔失敗: $_"
+                            }
                         }
+                    } finally {
+                        $image.Dispose()
                     }
-                    $image.Dispose()
                 }
             }
         } catch [System.Runtime.InteropServices.ExternalException] {
