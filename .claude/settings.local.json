@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm list:*)",
+      "Bash(pip list:*)",
+      "WebSearch",
+      "WebFetch(domain:getinvoke.dev)",
+      "Skill(update-config)"
+    ]
+  }
+}
