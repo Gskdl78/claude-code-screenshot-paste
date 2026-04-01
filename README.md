@@ -1,6 +1,6 @@
-# Claude Code 小工具集
+# Claude Code Screenshot Paste (Windows)
 
-Windows 上 Claude Code CLI 的實用工具集合。
+Windows 專用工具，讓 Claude Code CLI 支援 Ctrl+V 直接貼上截圖。
 
 ---
 
