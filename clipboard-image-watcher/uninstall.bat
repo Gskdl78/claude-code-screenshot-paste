@@ -37,7 +37,8 @@ powershell.exe -ExecutionPolicy Bypass -Command ^
     "        if ($hookProps.Count -eq 0) { " ^
     "            $json.PSObject.Properties.Remove('hooks'); " ^
     "        }; " ^
-    "        $json | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding UTF8; " ^
+    "        $utf8NoBom = New-Object System.Text.UTF8Encoding($false); " ^
+    "        [System.IO.File]::WriteAllText($settingsPath, ($json | ConvertTo-Json -Depth 10), $utf8NoBom); " ^
     "    }; " ^
     "}"
 

@@ -49,7 +49,8 @@ powershell.exe -ExecutionPolicy Bypass -Command ^
     "if (-not $existing) { " ^
     "    $json.hooks.SessionStart = @($json.hooks.SessionStart) + @($hookGroup); " ^
     "}; " ^
-    "$json | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding UTF8"
+    "$utf8NoBom = New-Object System.Text.UTF8Encoding($false); " ^
+    "[System.IO.File]::WriteAllText($settingsPath, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)"
 
 if %errorlevel% equ 0 (
     echo [OK] 已新增 SessionStart hook
