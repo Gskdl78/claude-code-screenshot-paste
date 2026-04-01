@@ -4,6 +4,23 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# Win32 API：取得前景視窗標題
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public class ForegroundHelper {
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int count);
+    public static string GetTitle() {
+        var sb = new StringBuilder(512);
+        GetWindowText(GetForegroundWindow(), sb, 512);
+        return sb.ToString();
+    }
+}
+"@
+
 # 檢查 STA 模式（powershell.exe 5.1 預設 STA，pwsh.exe 7+ 預設 MTA 會失敗）
 if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     Write-Host "錯誤：此腳本必須在 STA 模式下執行（使用 powershell.exe，不要用 pwsh.exe）" -ForegroundColor Red
@@ -58,6 +75,19 @@ try {
 
 $lastSignature = ""
 
+# Claude Code spinner 符號（用於判斷前景視窗是否為 Claude Code）
+$claudeSpinners = [char[]]@(0x280B, 0x2819, 0x2839, 0x2838, 0x283C, 0x2834, 0x2826, 0x2827, 0x2807, 0x280F, 0x2810, 0x2802)
+
+function Test-ClaudeCodeForeground {
+    $title = [ForegroundHelper]::GetTitle()
+    if (-not $title) { return $false }
+    foreach ($s in $claudeSpinners) {
+        if ($title.IndexOf($s) -ge 0) { return $true }
+    }
+    # 也檢查標題是否包含 "claude"（備用）
+    return $title -match '(?i)claude'
+}
+
 function Get-ImageSignature {
     param([System.Drawing.Image]$Image)
     $bmp = $null
@@ -89,6 +119,11 @@ function Get-ImageSignature {
     }
 }
 
+# 自動切換狀態
+$script:originalImageBytes = $null   # 備份的原始圖片（PNG bytes）
+$script:clipboardReplaced = $false   # 目前剪貼簿是否已被替換成路徑
+$script:lastSavedPath = ""           # 最後存檔的路徑
+
 # 清除舊的 stop sentinel
 if (Test-Path $stopFile) { Remove-Item $stopFile -Force -ErrorAction SilentlyContinue }
 
@@ -102,26 +137,64 @@ try {
         }
 
         try {
+            $isClaudeCode = Test-ClaudeCodeForeground
+
             if ([System.Windows.Forms.Clipboard]::ContainsImage()) {
                 $image = [System.Windows.Forms.Clipboard]::GetImage()
                 if ($null -ne $image) {
                     try {
                         $sig = Get-ImageSignature -Image $image
                         if ($sig -ne "" -and $sig -ne $lastSignature) {
+                            # 偵測到新截圖 → 存檔 + 備份原圖
                             $timestamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
                             $filename = "clipboard_${timestamp}.png"
                             $filepath = Join-Path $screenshotDir $filename
                             try {
                                 $image.Save($filepath, [System.Drawing.Imaging.ImageFormat]::Png)
-                                [System.Windows.Forms.Clipboard]::SetText($filepath)
+                                $script:lastSavedPath = $filepath
                                 $lastSignature = $sig
+
+                                # 備份原始圖片到記憶體
+                                $backupMs = New-Object System.IO.MemoryStream
+                                $image.Save($backupMs, [System.Drawing.Imaging.ImageFormat]::Png)
+                                $script:originalImageBytes = $backupMs.ToArray()
+                                $backupMs.Dispose()
+
+                                Write-Log "新截圖: $filename"
+
+                                if ($isClaudeCode) {
+                                    # Claude Code 在前景 → 替換剪貼簿為路徑
+                                    [System.Windows.Forms.Clipboard]::SetText($filepath)
+                                    $script:clipboardReplaced = $true
+                                    Write-Log "已替換剪貼簿為路徑（Claude Code 前景）"
+                                } else {
+                                    $script:clipboardReplaced = $false
+                                }
                             } catch {
                                 Write-Log "存檔失敗: $_"
                             }
+                        } elseif ($sig -eq $lastSignature -and $isClaudeCode -and -not $script:clipboardReplaced -and $script:lastSavedPath) {
+                            # 同一張圖，切回 Claude Code → 替換為路徑
+                            [System.Windows.Forms.Clipboard]::SetText($script:lastSavedPath)
+                            $script:clipboardReplaced = $true
+                            Write-Log "切回 Claude Code，替換剪貼簿為路徑"
                         }
                     } finally {
                         $image.Dispose()
                     }
+                }
+            } elseif ($script:clipboardReplaced -and -not $isClaudeCode -and $script:originalImageBytes) {
+                # 離開 Claude Code + 剪貼簿目前是路徑 → 還原為原始圖片
+                try {
+                    $restoreMs = New-Object System.IO.MemoryStream(,$script:originalImageBytes)
+                    $restoreImg = [System.Drawing.Image]::FromStream($restoreMs)
+                    [System.Windows.Forms.Clipboard]::SetImage($restoreImg)
+                    $restoreImg.Dispose()
+                    $restoreMs.Dispose()
+                    $script:clipboardReplaced = $false
+                    Write-Log "離開 Claude Code，還原剪貼簿為圖片"
+                } catch {
+                    Write-Log "還原圖片失敗: $_"
                 }
             }
         } catch [System.Runtime.InteropServices.ExternalException] {
@@ -133,6 +206,16 @@ try {
         Start-Sleep -Milliseconds 500
     }
 } finally {
+    # 退出前還原剪貼簿
+    if ($script:clipboardReplaced -and $script:originalImageBytes) {
+        try {
+            $restoreMs = New-Object System.IO.MemoryStream(,$script:originalImageBytes)
+            $restoreImg = [System.Drawing.Image]::FromStream($restoreMs)
+            [System.Windows.Forms.Clipboard]::SetImage($restoreImg)
+            $restoreImg.Dispose()
+            $restoreMs.Dispose()
+        } catch {}
+    }
     Write-Log "剪貼簿監視器停止"
     if ($mutex) {
         $mutex.ReleaseMutex()
