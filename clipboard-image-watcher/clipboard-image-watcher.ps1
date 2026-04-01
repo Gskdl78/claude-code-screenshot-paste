@@ -40,6 +40,22 @@ try {
 
 Write-Log "剪貼簿監視器啟動"
 
+# 啟動時清理超過 7 天的舊截圖
+try {
+    $cutoff = (Get-Date).AddDays(-7)
+    Get-ChildItem -Path $screenshotDir -Filter "clipboard_*.png" -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt $cutoff } |
+        ForEach-Object {
+            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+        }
+    # 清理超過 1MB 的 log 檔
+    if ((Test-Path $logFile) -and (Get-Item $logFile -ErrorAction SilentlyContinue).Length -gt 1MB) {
+        Remove-Item $logFile -Force -ErrorAction SilentlyContinue
+    }
+} catch {
+    Write-Log "清理舊截圖失敗: $_"
+}
+
 $lastSignature = ""
 
 function Get-ImageSignature {

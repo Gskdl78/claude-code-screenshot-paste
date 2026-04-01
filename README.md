@@ -47,6 +47,10 @@ Claude Code CLI 在 Windows 上的圖片貼上功能（`Alt+V` / `chat:imagePast
 - 啟動：`clipboard-image-watcher\start-watcher.bat`
 - 停止：`clipboard-image-watcher\stop-watcher.bat`
 
+### 截圖暫存清理
+
+超過 7 天的舊截圖會在監視器啟動時自動清理。也可以雙擊 `clipboard-image-watcher\cleanup.bat` 手動清理，會顯示清理數量和釋放空間。
+
 ### 卸載
 
 雙擊 `clipboard-image-watcher\uninstall.bat`，會停止監視器、移除 SessionStart hook，並可選擇是否清理截圖暫存目錄。
@@ -64,7 +68,7 @@ Claude Code CLI 在 Windows 上的圖片貼上功能（`Alt+V` / `chat:imagePast
 
 - 截圖存檔後剪貼簿內容變為路徑文字，無法再將該圖片貼到其他應用程式（如 LINE、Word），需重新截圖
 - 僅處理剪貼簿中的 bitmap 圖片資料，不處理從檔案總管複製的圖片檔案
-- 截圖暫存目錄不主動清理，依賴系統重啟或磁碟清理工具處理 `%TEMP%`
+- 截圖暫存保留最近 7 天，更早的會在監視器啟動時自動清理
 
 ### 系統需求
 
