@@ -1,25 +1,39 @@
 # Claude Code Screenshot Paste (Windows)
 
-Windows 專用工具，讓 Claude Code CLI 支援 Ctrl+V 直接貼上截圖。
+> 讓 Claude Code CLI 支援 Ctrl+V 直接貼上截圖，同時不影響其他應用程式的正常貼圖功能。
 
----
+## 為什麼需要這個工具？
 
-## Clipboard Image Watcher
+Claude Code 是一款強大的 CLI 工具，但在 Windows 上截圖貼上一直是個痛點：
 
-解決 Windows 上 Claude Code 無法用 Ctrl+V 貼上截圖的問題。
+- **原生功能不穩定**：`Alt+V` / `chat:imagePaste` 在 Windows 上長期存在相容性問題，Snipping Tool 的 BMP 格式常無法偵測，不同版本之間反覆 regression
+- **工作流程中斷**：每次要分享截圖給 Claude 都需要手動存檔、輸入路徑，嚴重影響效率
+- **與其他 app 衝突**：過去的解決方案會把剪貼簿中的圖片替換成檔案路徑，導致在 LINE、Word 等應用程式中無法正常貼圖
 
-### 問題背景
+本工具完美解決了以上所有問題。
 
-Claude Code CLI 在 Windows 上的圖片貼上功能（`Alt+V` / `chat:imagePaste`）長期不穩定，包括 Snipping Tool 的 BMP 格式不被偵測、不同版本間反覆出現 regression 等。本工具透過背景監控剪貼簿的方式，完全繞過原生功能的限制。
+## 功能特色
+
+- **零操作成本**：截圖後直接 Ctrl+V，不需要改變任何操作習慣
+- **智慧切換**：自動偵測前景視窗，在 Claude Code 中貼上路徑、在其他 app 中貼上原始圖片
+- **自動啟動**：透過 Claude Code 的 SessionStart hook，每次開啟 Claude Code 時自動在背景執行
+- **自動清理**：超過 7 天的舊截圖自動清除，不佔用磁碟空間
+
+## 運作原理
+
+背景 PowerShell 腳本每 500ms 輪詢剪貼簿，偵測到 bitmap 圖片時自動：
 
 ### 原理
 
 背景 PowerShell 腳本每 500ms 輪詢剪貼簿，偵測到 bitmap 圖片時自動：
 
 1. 存成 PNG 到 `%TEMP%\claude-screenshots\`（檔名含毫秒時間戳）
-2. 將剪貼簿內容替換為該檔案的絕對路徑
+2. 備份原始圖片到記憶體
+3. **根據前景視窗自動切換剪貼簿內容**：
+   - Claude Code 在前景 → 剪貼簿替換為檔案路徑
+   - 其他應用程式在前景 → 剪貼簿還原為原始圖片
 
-在 Claude Code 中按 Ctrl+V 即會貼上圖片路徑，Claude 自動讀取並分析圖片內容。剪貼簿為純文字時不做任何處理，Ctrl+V 行為完全不受影響。
+在 Claude Code 中按 Ctrl+V 即會貼上圖片路徑，Claude 自動讀取並分析圖片內容。切到其他應用程式（LINE、Word 等）時 Ctrl+V 正常貼上圖片。
 
 ### 安裝
 
@@ -39,7 +53,8 @@ Claude Code CLI 在 Windows 上的圖片貼上功能（`Alt+V` / `chat:imagePast
 
 | 操作 | 結果 |
 |------|------|
-| 截圖（Win+Shift+S / PrtSc）後 Ctrl+V | 貼上 PNG 檔案路徑，Claude 自動讀取圖片 |
+| 截圖後在 Claude Code 中 Ctrl+V | 貼上 PNG 檔案路徑，Claude 自動讀取圖片 |
+| 截圖後在其他 app（LINE、Word 等）Ctrl+V | 正常貼上圖片 |
 | 複製文字後 Ctrl+V | 正常貼上文字，不受影響 |
 
 ### 手動啟動與停止
@@ -62,13 +77,16 @@ Claude Code CLI 在 Windows 上的圖片貼上功能（`Alt+V` / `chat:imagePast
 - 以 named mutex（`Global\ClaudeClipboardWatcher`）確保單一實例
 - 以圖片尺寸加部分像素 hash 做去重，避免同一張圖重複存檔
 - 以 sentinel 檔案（`.stop`）實現優雅停止，搭配程序強制結束作為備援
+- 透過 Win32 API `GetForegroundWindow` + `GetWindowText` 偵測前景視窗
+- 以 Claude Code 的 Braille spinner 字元（`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠐⠂`）和視窗標題中的 "claude" 關鍵字判斷是否為 Claude Code 視窗
+- 原始圖片備份在記憶體中，切換視窗時即時還原或替換剪貼簿，延遲 < 500ms
 - 錯誤記錄於 `%TEMP%\claude-screenshots\watcher.log`
 
 ### 已知限制
 
-- 截圖存檔後剪貼簿內容變為路徑文字，無法再將該圖片貼到其他應用程式（如 LINE、Word），需重新截圖
 - 僅處理剪貼簿中的 bitmap 圖片資料，不處理從檔案總管複製的圖片檔案
 - 截圖暫存保留最近 7 天，更早的會在監視器啟動時自動清理
+- 前景視窗偵測依賴視窗標題中的 Claude Code spinner 符號或 "claude" 關鍵字
 
 ### 系統需求
 
