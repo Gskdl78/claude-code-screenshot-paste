@@ -1,4 +1,4 @@
-# clipboard-image-watcher.ps1
+﻿# clipboard-image-watcher.ps1
 # 剪貼簿圖片監視器 - 偵測剪貼簿圖片並自動存成 PNG，將路徑寫回剪貼簿
 
 Add-Type -AssemblyName System.Windows.Forms
