@@ -11,6 +11,8 @@ A collection of small utilities and tools designed to enhance the Claude Code CL
 - Primary platform: **Windows 10/11**
 - Scripts: **PowerShell 5.1** (`powershell.exe`, not `pwsh.exe`) and **Batch files** (`.bat`)
 - PowerShell scripts that use `System.Windows.Forms.Clipboard` must run in STA (Single-Threaded Apartment) mode — this is the default for `powershell.exe` 5.1 but NOT for `pwsh.exe` 7+
+- **PS1 files with Chinese/Unicode must be saved with UTF-8 BOM** — PowerShell 5.1 defaults to ANSI encoding without BOM, causing parse errors on Unicode characters
+- **Batch files (.bat) must use CRLF line endings** — LF-only causes cmd.exe to fail silently
 
 ## Architecture
 
