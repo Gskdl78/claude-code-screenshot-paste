@@ -124,6 +124,16 @@ $script:originalImageBytes = $null   # 備份的原始圖片（PNG bytes）
 $script:clipboardReplaced = $false   # 目前剪貼簿是否已被替換成路徑
 $script:lastSavedPath = ""           # 最後存檔的路徑
 
+# Claude Code CLI 貼上偵測需要 bracketed paste 事件，或單一 key event 長度 > 800 (cli.js sb8 常數)
+# 用空白前綴把總長拉到 > 800，強制觸發 CLI 的「長貼上」fallback
+# CLI 的 split 會把路徑分離，空白 token 被 .trim() 過濾掉，不會污染輸入框
+$clipboardPadding = ' ' * 900
+
+function Set-ClipboardPathPadded {
+    param([string]$Path)
+    [System.Windows.Forms.Clipboard]::SetText($clipboardPadding + $Path)
+}
+
 # 清除舊的 stop sentinel
 if (Test-Path $stopFile) { Remove-Item $stopFile -Force -ErrorAction SilentlyContinue }
 
@@ -163,8 +173,8 @@ try {
                                 Write-Log "新截圖: $filename"
 
                                 if ($isClaudeCode) {
-                                    # Claude Code 在前景 → 替換剪貼簿為路徑
-                                    [System.Windows.Forms.Clipboard]::SetText($filepath)
+                                    # Claude Code 在前景 → 替換剪貼簿為路徑（加空白前綴觸發 CLI 長貼上偵測）
+                                    Set-ClipboardPathPadded -Path $filepath
                                     $script:clipboardReplaced = $true
                                     Write-Log "已替換剪貼簿為路徑（Claude Code 前景）"
                                 } else {
@@ -174,8 +184,8 @@ try {
                                 Write-Log "存檔失敗: $_"
                             }
                         } elseif ($sig -eq $lastSignature -and $isClaudeCode -and -not $script:clipboardReplaced -and $script:lastSavedPath) {
-                            # 同一張圖，切回 Claude Code → 替換為路徑
-                            [System.Windows.Forms.Clipboard]::SetText($script:lastSavedPath)
+                            # 同一張圖，切回 Claude Code → 替換為路徑（同樣加空白前綴）
+                            Set-ClipboardPathPadded -Path $script:lastSavedPath
                             $script:clipboardReplaced = $true
                             Write-Log "切回 Claude Code，替換剪貼簿為路徑"
                         }
