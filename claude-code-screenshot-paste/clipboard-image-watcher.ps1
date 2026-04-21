@@ -4,7 +4,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Win32 API：取得前景視窗標題
+# Win32 API：取得前景視窗 + 對應 process id
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -13,10 +13,17 @@ public class ForegroundHelper {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int count);
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     public static string GetTitle() {
         var sb = new StringBuilder(512);
         GetWindowText(GetForegroundWindow(), sb, 512);
         return sb.ToString();
+    }
+    public static uint GetForegroundPid() {
+        uint pid = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+        return pid;
     }
 }
 "@
@@ -75,17 +82,78 @@ try {
 
 $lastSignature = ""
 
-# Claude Code spinner 符號（用於判斷前景視窗是否為 Claude Code）
-$claudeSpinners = [char[]]@(0x280B, 0x2819, 0x2839, 0x2838, 0x283C, 0x2834, 0x2826, 0x2827, 0x2807, 0x280F, 0x2810, 0x2802)
+# 前景視窗判斷：掃描前景 process 的行程樹，若後代含 claude.exe 或 command line 含 claude-code 即判定為 Claude Code。
+# 2 秒快取避免每 500ms 都打 WMI。
+# 這個作法不依賴視窗標題字串（CLI 升級常會改標題格式），是目前最穩定的偵測方式。
+$script:fgCacheHwnd = [IntPtr]::Zero
+$script:fgCacheResult = $false
+$script:fgCacheTime = [DateTime]::MinValue
+
+function Test-ProcessTreeContainsClaude {
+    param([int]$RootPid)
+    try {
+        $all = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
+        $children = @{}
+        $byId = @{}
+        foreach ($p in $all) {
+            $byId[[int]$p.ProcessId] = $p
+            $parentPid = [int]$p.ParentProcessId
+            if (-not $children.ContainsKey($parentPid)) {
+                $children[$parentPid] = [System.Collections.Generic.List[object]]::new()
+            }
+            $children[$parentPid].Add($p)
+        }
+
+        $queue = [System.Collections.Queue]::new()
+        $queue.Enqueue($RootPid)
+        $visited = @{}
+        while ($queue.Count -gt 0) {
+            $curPid = [int]$queue.Dequeue()
+            if ($visited.ContainsKey($curPid)) { continue }
+            $visited[$curPid] = $true
+
+            $proc = $byId[$curPid]
+            if ($proc) {
+                if ($proc.Name -ieq 'claude.exe') { return $true }
+                $cmd = $proc.CommandLine
+                if ($cmd) {
+                    # node.exe 執行 claude-code 的 cli.js，或以 claude.cmd/claude.ps1 包裝器啟動
+                    if ($cmd -match '(?i)claude-code') { return $true }
+                    if ($cmd -match '(?i)[\\/"]claude\.(exe|cmd|ps1)') { return $true }
+                }
+            }
+            if ($children.ContainsKey($curPid)) {
+                foreach ($c in $children[$curPid]) {
+                    $queue.Enqueue([int]$c.ProcessId)
+                }
+            }
+        }
+        return $false
+    } catch {
+        Write-Log "Test-ProcessTreeContainsClaude 失敗: $_"
+        return $false
+    }
+}
 
 function Test-ClaudeCodeForeground {
-    $title = [ForegroundHelper]::GetTitle()
-    if (-not $title) { return $false }
-    foreach ($s in $claudeSpinners) {
-        if ($title.IndexOf($s) -ge 0) { return $true }
+    $hwnd = [ForegroundHelper]::GetForegroundWindow()
+    if ($hwnd -eq [IntPtr]::Zero) { return $false }
+
+    $now = Get-Date
+    if ($hwnd -eq $script:fgCacheHwnd -and ($now - $script:fgCacheTime).TotalMilliseconds -lt 2000) {
+        return $script:fgCacheResult
     }
-    # 也檢查標題是否包含 "claude"（備用）
-    return $title -match '(?i)claude'
+
+    $fgPid = [ForegroundHelper]::GetForegroundPid()
+    $result = $false
+    if ($fgPid -ne 0) {
+        $result = Test-ProcessTreeContainsClaude -RootPid ([int]$fgPid)
+    }
+
+    $script:fgCacheHwnd = $hwnd
+    $script:fgCacheResult = $result
+    $script:fgCacheTime = $now
+    return $result
 }
 
 function Get-ImageSignature {
