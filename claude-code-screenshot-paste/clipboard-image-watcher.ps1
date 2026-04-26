@@ -261,18 +261,35 @@ try {
                         $image.Dispose()
                     }
                 }
-            } elseif ($script:clipboardReplaced -and -not $isClaudeCode -and $script:originalImageBytes) {
-                # 離開 Claude Code + 剪貼簿目前是路徑 → 還原為原始圖片
+            } elseif ($script:clipboardReplaced) {
+                # 沒有圖片但仍標記為已替換 → 必須先確認剪貼簿仍是我們設的路徑文字，
+                # 否則使用者可能已自行複製其他內容，盲目還原會覆蓋使用者的剪貼簿。
                 try {
-                    $restoreMs = New-Object System.IO.MemoryStream(,$script:originalImageBytes)
-                    $restoreImg = [System.Drawing.Image]::FromStream($restoreMs)
-                    [System.Windows.Forms.Clipboard]::SetImage($restoreImg)
-                    $restoreImg.Dispose()
-                    $restoreMs.Dispose()
-                    $script:clipboardReplaced = $false
-                    Write-Log "離開 Claude Code，還原剪貼簿為圖片"
+                    if ([System.Windows.Forms.Clipboard]::ContainsText()) {
+                        $currentText = [System.Windows.Forms.Clipboard]::GetText()
+                        if ($currentText -ne ($clipboardPadding + $script:lastSavedPath)) {
+                            # 使用者已複製其他文字 → 放棄備份，避免覆蓋
+                            $script:clipboardReplaced = $false
+                            $script:originalImageBytes = $null
+                            Write-Log "偵測到使用者複製其他內容，清除備份避免覆蓋"
+                        } elseif (-not $isClaudeCode -and $script:originalImageBytes) {
+                            # 仍是我們的路徑 + 離開 Claude Code → 還原為原始圖片
+                            try {
+                                $restoreMs = New-Object System.IO.MemoryStream(,$script:originalImageBytes)
+                                $restoreImg = [System.Drawing.Image]::FromStream($restoreMs)
+                                [System.Windows.Forms.Clipboard]::SetImage($restoreImg)
+                                $restoreImg.Dispose()
+                                $restoreMs.Dispose()
+                                $script:clipboardReplaced = $false
+                                Write-Log "離開 Claude Code，還原剪貼簿為圖片"
+                            } catch {
+                                Write-Log "還原圖片失敗: $_"
+                            }
+                        }
+                    }
+                    # 剪貼簿既非文字也非圖片（空 / 其他格式）→ 保守不動
                 } catch {
-                    Write-Log "還原圖片失敗: $_"
+                    Write-Log "檢查剪貼簿文字狀態失敗: $_"
                 }
             }
         } catch [System.Runtime.InteropServices.ExternalException] {
@@ -284,14 +301,23 @@ try {
         Start-Sleep -Milliseconds 500
     }
 } finally {
-    # 退出前還原剪貼簿
+    # 退出前還原剪貼簿（同樣需確認剪貼簿仍是我們設的路徑文字才還原）
     if ($script:clipboardReplaced -and $script:originalImageBytes) {
         try {
-            $restoreMs = New-Object System.IO.MemoryStream(,$script:originalImageBytes)
-            $restoreImg = [System.Drawing.Image]::FromStream($restoreMs)
-            [System.Windows.Forms.Clipboard]::SetImage($restoreImg)
-            $restoreImg.Dispose()
-            $restoreMs.Dispose()
+            $shouldRestore = $false
+            if ([System.Windows.Forms.Clipboard]::ContainsText()) {
+                $currentText = [System.Windows.Forms.Clipboard]::GetText()
+                if ($currentText -eq ($clipboardPadding + $script:lastSavedPath)) {
+                    $shouldRestore = $true
+                }
+            }
+            if ($shouldRestore) {
+                $restoreMs = New-Object System.IO.MemoryStream(,$script:originalImageBytes)
+                $restoreImg = [System.Drawing.Image]::FromStream($restoreMs)
+                [System.Windows.Forms.Clipboard]::SetImage($restoreImg)
+                $restoreImg.Dispose()
+                $restoreMs.Dispose()
+            }
         } catch {}
     }
     Write-Log "剪貼簿監視器停止"
